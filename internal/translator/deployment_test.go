@@ -1,0 +1,140 @@
+package translator
+
+import (
+	"testing"
+	"time"
+
+	comptypes "github.com/compose-spec/compose-go/v2/types"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/util/intstr"
+)
+
+func TestTranslateProbe_HTTP(t *testing.T) {
+	p := &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			HTTPGet: &corev1.HTTPGetAction{
+				Path: "/health",
+				Port: intstr.FromInt32(8080),
+			},
+		},
+		PeriodSeconds:       10,
+		TimeoutSeconds:      3,
+		InitialDelaySeconds: 5,
+		FailureThreshold:    3,
+	}
+
+	hc := translateProbe(p)
+	if hc == nil {
+		t.Fatal("expected non-nil HealthCheckConfig")
+	}
+	if len(hc.Test) < 2 {
+		t.Fatalf("expected test slice len>=2, got %v", hc.Test)
+	}
+	if hc.Test[0] != "CMD-SHELL" {
+		t.Errorf("expected CMD-SHELL, got %q", hc.Test[0])
+	}
+	if hc.Test[1] != "curl -sf http://localhost:8080/health" {
+		t.Errorf("unexpected test command: %q", hc.Test[1])
+	}
+
+	wantInterval := comptypes.Duration(10 * time.Second)
+	if *hc.Interval != wantInterval {
+		t.Errorf("interval mismatch: want %v, got %v", wantInterval, *hc.Interval)
+	}
+}
+
+func TestTranslateProbe_Exec(t *testing.T) {
+	p := &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			Exec: &corev1.ExecAction{Command: []string{"sh", "-c", "test -f /ready"}},
+		},
+		PeriodSeconds: 5,
+	}
+	hc := translateProbe(p)
+	if hc == nil {
+		t.Fatal("expected non-nil HealthCheckConfig")
+	}
+	if hc.Test[0] != "CMD-SHELL" || hc.Test[1] != "sh" {
+		t.Errorf("unexpected exec test: %v", hc.Test)
+	}
+}
+
+func TestTranslateProbe_TCP(t *testing.T) {
+	p := &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(5432)},
+		},
+	}
+	hc := translateProbe(p)
+	if hc == nil {
+		t.Fatal("expected non-nil HealthCheckConfig")
+	}
+	if hc.Test[1] != "nc -z localhost 5432" {
+		t.Errorf("unexpected tcp test: %q", hc.Test[1])
+	}
+}
+
+func TestTranslateResources(t *testing.T) {
+	req := corev1.ResourceRequirements{
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("500m"),
+			corev1.ResourceMemory: resource.MustParse("256Mi"),
+		},
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("100m"),
+			corev1.ResourceMemory: resource.MustParse("128Mi"),
+		},
+	}
+
+	res := translateResources(req)
+
+	if res.Limits == nil {
+		t.Fatal("expected non-nil Limits")
+	}
+	// 500m = 0.5 cores
+	if res.Limits.NanoCPUs != 0.5 {
+		t.Errorf("expected 0.5 NanoCPUs limit, got %v", res.Limits.NanoCPUs)
+	}
+	// 256Mi = 268435456 bytes
+	if res.Limits.MemoryBytes != 268435456 {
+		t.Errorf("expected 268435456 bytes limit, got %v", res.Limits.MemoryBytes)
+	}
+
+	if res.Reservations == nil {
+		t.Fatal("expected non-nil Reservations")
+	}
+	if res.Reservations.NanoCPUs != 0.1 {
+		t.Errorf("expected 0.1 NanoCPUs reservation, got %v", res.Reservations.NanoCPUs)
+	}
+}
+
+func TestEnvFromConfigMap(t *testing.T) {
+	cmIndex := map[string]map[string]string{
+		"default/app-config": {"LOG_LEVEL": "debug", "MAX_CONN": "50"},
+	}
+	secIndex := map[string]map[string]string{}
+
+	c := corev1.Container{
+		Name:  "app",
+		Image: "myapp:latest",
+		EnvFrom: []corev1.EnvFromSource{
+			{ConfigMapRef: &corev1.ConfigMapEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: "app-config"},
+			}},
+		},
+	}
+
+	spec := corev1.PodSpec{Containers: []corev1.Container{c}}
+	svcs := translatePodSpec("myapp", "default", spec, cmIndex, secIndex, "default", nil)
+	if len(svcs) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(svcs))
+	}
+	svc := svcs[0]
+	if svc.Environment["LOG_LEVEL"] == nil || *svc.Environment["LOG_LEVEL"] != "debug" {
+		t.Errorf("expected LOG_LEVEL=debug, got %v", svc.Environment["LOG_LEVEL"])
+	}
+	if svc.Environment["MAX_CONN"] == nil || *svc.Environment["MAX_CONN"] != "50" {
+		t.Errorf("expected MAX_CONN=50, got %v", svc.Environment["MAX_CONN"])
+	}
+}

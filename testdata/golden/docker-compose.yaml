@@ -1,0 +1,61 @@
+name: dev
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command:
+    - -g
+    - daemon off;
+    deploy:
+      placement: {}
+      resources:
+        limits:
+          cpus: 0.2
+          memory: "134217728"
+        reservations:
+          cpus: 0.05
+          memory: "67108864"
+    entrypoint:
+    - nginx
+    environment:
+      APP_ENV: development
+      DB_PASSWORD: s3cr3tpassword
+      LOG_LEVEL: info
+      feature_flags: dark_mode=true,beta=false
+      log_level: info
+      max_connections: "100"
+    healthcheck:
+      interval: 10s
+      retries: 3
+      start_period: 5s
+      test:
+      - CMD-SHELL
+      - curl -sf http://localhost:80/healthz
+      timeout: 3s
+    image: nginx:1.25
+    labels:
+      kdc.io/source-kind: Deployment
+      kdc.io/source-name: web
+      kdc.io/source-namespace: default
+    ports:
+    - protocol: tcp
+      published: "8080"
+      target: 80
+    volumes:
+    - source: app-data
+      target: /data
+      type: volume
+    - read_only: true
+      source: ./.kdc/configs/app-config
+      target: /etc/app
+      type: bind
+    - source: ./src
+      target: /usr/share/nginx/html
+      type: bind
+volumes:
+  app-data:
+    labels:
+      kdc.io/source-kind: PersistentVolumeClaim
+      kdc.io/source-name: app-data
+      kdc.io/source-namespace: default

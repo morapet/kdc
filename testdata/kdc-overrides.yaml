@@ -1,0 +1,23 @@
+# kdc-overrides.yaml
+# Docker Compose overrides for local development.
+# This file is deep-merged onto the generated docker-compose.yaml.
+# Ports and volumes are APPENDED to generated entries (not replaced).
+
+services:
+  web:
+    # Expose the web service on localhost port 8080
+    ports:
+      - target: 80
+        published: "8080"
+        protocol: tcp
+    # Mount local source code for live-reload
+    volumes:
+      - type: bind
+        source: ./src
+        target: /usr/share/nginx/html
+    # Override image for local dev (use a build context instead)
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    environment:
+      APP_ENV: development
