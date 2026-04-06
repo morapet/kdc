@@ -18,13 +18,12 @@ services:
           memory: "67108864"
     entrypoint:
     - nginx
+    env_file:
+    - .kdc/envs/app-config.env
     environment:
       APP_ENV: development
       DB_PASSWORD: s3cr3tpassword
       LOG_LEVEL: info
-      feature_flags: dark_mode=true,beta=false
-      log_level: info
-      max_connections: "100"
     healthcheck:
       interval: 10s
       retries: 3

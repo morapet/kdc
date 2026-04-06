@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/morapet/kdc/internal/compose"
+	"github.com/morapet/kdc/internal/envfiles"
 	"github.com/morapet/kdc/internal/kustomize"
 	"github.com/morapet/kdc/internal/override"
 	"github.com/morapet/kdc/internal/parser"
@@ -116,7 +117,17 @@ func runGenerate(kustomizePath, outputPath, overridePath, projectName, namespace
 		return err
 	}
 
-	// 5. Write output.
+	// 5. Write .env files for ConfigMaps and Secrets referenced via envFrom.
+	// These go into .kdc/envs/ next to the output file (or cwd for stdout/dry-run).
+	envDir := filepath.Join(filepath.Dir(outputPath), ".kdc", "envs")
+	if dryRun {
+		envDir = filepath.Join(".kdc", "envs")
+	}
+	if err := envfiles.Write(reg, envDir); err != nil {
+		return fmt.Errorf("write env files: %w", err)
+	}
+
+	// 6. Write compose output.
 	dest := outputPath
 	if dryRun {
 		dest = "-"
@@ -127,6 +138,7 @@ func runGenerate(kustomizePath, outputPath, overridePath, projectName, namespace
 
 	if dest != "-" {
 		fmt.Fprintf(os.Stderr, "wrote %s\n", dest)
+		fmt.Fprintf(os.Stderr, "wrote env files to %s/\n", envDir)
 	}
 	return nil
 }

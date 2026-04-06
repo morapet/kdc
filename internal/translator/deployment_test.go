@@ -109,7 +109,7 @@ func TestTranslateResources(t *testing.T) {
 	}
 }
 
-func TestEnvFromConfigMap(t *testing.T) {
+func TestEnvFromConfigMap_UsesEnvFile(t *testing.T) {
 	cmIndex := map[string]map[string]string{
 		"default/app-config": {"LOG_LEVEL": "debug", "MAX_CONN": "50"},
 	}
@@ -131,10 +131,66 @@ func TestEnvFromConfigMap(t *testing.T) {
 		t.Fatalf("expected 1 service, got %d", len(svcs))
 	}
 	svc := svcs[0]
-	if svc.Environment["LOG_LEVEL"] == nil || *svc.Environment["LOG_LEVEL"] != "debug" {
-		t.Errorf("expected LOG_LEVEL=debug, got %v", svc.Environment["LOG_LEVEL"])
+
+	// envFrom should produce an env_file: reference, NOT inline environment: entries.
+	if len(svc.EnvFiles) != 1 {
+		t.Fatalf("expected 1 env_file entry, got %d: %+v", len(svc.EnvFiles), svc.EnvFiles)
 	}
-	if svc.Environment["MAX_CONN"] == nil || *svc.Environment["MAX_CONN"] != "50" {
-		t.Errorf("expected MAX_CONN=50, got %v", svc.Environment["MAX_CONN"])
+	if svc.EnvFiles[0].Path != ".kdc/envs/app-config.env" {
+		t.Errorf("unexpected env_file path: %q", svc.EnvFiles[0].Path)
+	}
+	if !svc.EnvFiles[0].Required {
+		t.Error("expected env_file to be required")
+	}
+
+	// Keys from the ConfigMap should NOT be inlined into environment:.
+	if svc.Environment["LOG_LEVEL"] != nil {
+		t.Error("LOG_LEVEL should not be inlined when envFrom uses env_file")
+	}
+}
+
+func TestEnvValueFrom_StillInlined(t *testing.T) {
+	cmIndex := map[string]map[string]string{
+		"default/app-config": {"LOG_LEVEL": "debug"},
+	}
+	secIndex := map[string]map[string]string{
+		"default/db-secret": {"password": "s3cr3t"},
+	}
+
+	c := corev1.Container{
+		Name:  "app",
+		Image: "myapp:latest",
+		Env: []corev1.EnvVar{
+			{
+				Name: "LOG_LEVEL",
+				ValueFrom: &corev1.EnvVarSource{
+					ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "app-config"},
+						Key:                  "LOG_LEVEL",
+					},
+				},
+			},
+			{
+				Name: "DB_PASSWORD",
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "db-secret"},
+						Key:                  "password",
+					},
+				},
+			},
+		},
+	}
+
+	spec := corev1.PodSpec{Containers: []corev1.Container{c}}
+	svcs := translatePodSpec("myapp", "default", spec, cmIndex, secIndex, "default", nil)
+	svc := svcs[0]
+
+	// Single-key valueFrom references should still be inlined.
+	if svc.Environment["LOG_LEVEL"] == nil || *svc.Environment["LOG_LEVEL"] != "debug" {
+		t.Errorf("expected LOG_LEVEL=debug inlined, got %v", svc.Environment["LOG_LEVEL"])
+	}
+	if svc.Environment["DB_PASSWORD"] == nil || *svc.Environment["DB_PASSWORD"] != "s3cr3t" {
+		t.Errorf("expected DB_PASSWORD=s3cr3t inlined, got %v", svc.Environment["DB_PASSWORD"])
 	}
 }

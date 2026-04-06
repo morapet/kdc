@@ -147,21 +147,25 @@ func translateContainer(
 		}
 	}
 
-	// envFrom: inject all keys from the referenced ConfigMap/Secret.
+	// envFrom: reference the ConfigMap/Secret as an env_file instead of inlining
+	// all key-value pairs into environment:. This creates a shared .env file that:
+	//   - can be referenced by multiple services without duplication
+	//   - allows variables within the file to reference each other
+	//   - is editable by the developer without regenerating the compose file
 	for _, ef := range c.EnvFrom {
 		if ef.ConfigMapRef != nil {
-			key := configMapEnvKey(ef.ConfigMapRef.Name, namespace)
-			for k, v := range cmIndex[key] {
-				val := v
-				svc.Environment[k] = &val
-			}
+			required := ef.ConfigMapRef.Optional == nil || !*ef.ConfigMapRef.Optional
+			svc.EnvFiles = append(svc.EnvFiles, comptypes.EnvFile{
+				Path:     fmt.Sprintf(".kdc/envs/%s.env", ef.ConfigMapRef.Name),
+				Required: required,
+			})
 		}
 		if ef.SecretRef != nil {
-			key := secretEnvKey(ef.SecretRef.Name, namespace)
-			for k, v := range secIndex[key] {
-				val := v
-				svc.Environment[k] = &val
-			}
+			required := ef.SecretRef.Optional == nil || !*ef.SecretRef.Optional
+			svc.EnvFiles = append(svc.EnvFiles, comptypes.EnvFile{
+				Path:     fmt.Sprintf(".kdc/envs/%s.env", ef.SecretRef.Name),
+				Required: required,
+			})
 		}
 	}
 
