@@ -75,6 +75,7 @@ func quoteEnvValue(v string) string {
 	if strings.ContainsAny(v, " \t\n#\"'\\$") {
 		v = strings.ReplaceAll(v, `\`, `\\`)
 		v = strings.ReplaceAll(v, `"`, `\"`)
+		v = strings.ReplaceAll(v, `$`, `$$`)
 		return `"` + v + `"`
 	}
 	return v

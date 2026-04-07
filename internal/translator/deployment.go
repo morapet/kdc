@@ -2,6 +2,7 @@ package translator
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	comptypes "github.com/compose-spec/compose-go/v2/types"
@@ -24,7 +25,7 @@ func translateDeployment(
 	if ns == "" {
 		ns = defaultNamespace
 	}
-	return translatePodSpec(d.Name, ns, d.Spec.Template.Spec, cmIndex, secIndex, defaultNamespace, d.Labels, eng)
+	return translatePodSpec("Deployment", d.Name, ns, d.Spec.Template.Spec, cmIndex, secIndex, defaultNamespace, d.Labels, eng)
 }
 
 // translatePod converts a standalone Pod into compose services.
@@ -39,10 +40,11 @@ func translatePod(
 	if ns == "" {
 		ns = defaultNamespace
 	}
-	return translatePodSpec(p.Name, ns, p.Spec, cmIndex, secIndex, defaultNamespace, p.Labels, eng)
+	return translatePodSpec("Pod", p.Name, ns, p.Spec, cmIndex, secIndex, defaultNamespace, p.Labels, eng)
 }
 
 func translatePodSpec(
+	sourceKind string,
 	ownerName string,
 	namespace string,
 	spec corev1.PodSpec,
@@ -97,7 +99,7 @@ func translatePodSpec(
 
 		svc := translateContainer(name, namespace, c, spec, volSources, cmIndex, secIndex, defaultNamespace)
 		svc.Labels = comptypes.Labels{
-			kdctypes.AnnotationSourceKind:      "Deployment",
+			kdctypes.AnnotationSourceKind:      sourceKind,
 			kdctypes.AnnotationSourceName:      ownerName,
 			kdctypes.AnnotationSourceNamespace: namespace,
 		}
@@ -209,6 +211,20 @@ func translateContainer(
 	// Volume mounts.
 	svc.Volumes = translateVolumeMounts(c.VolumeMounts, volSources)
 
+	// Container ports.
+	for _, p := range c.Ports {
+		proto := strings.ToLower(string(p.Protocol))
+		if proto == "" {
+			proto = "tcp"
+		}
+		port := fmt.Sprintf("%d", p.ContainerPort)
+		svc.Ports = append(svc.Ports, comptypes.ServicePortConfig{
+			Target:    uint32(p.ContainerPort),
+			Published: port,
+			Protocol:  proto,
+		})
+	}
+
 	// Health check (prefer ReadinessProbe over LivenessProbe).
 	probe := c.ReadinessProbe
 	if probe == nil {
@@ -277,7 +293,7 @@ func translateProbe(p *corev1.Probe) *comptypes.HealthCheckConfig {
 
 	switch {
 	case p.Exec != nil:
-		test = append([]string{"CMD-SHELL"}, p.Exec.Command...)
+		test = append([]string{"CMD"}, p.Exec.Command...)
 	case p.HTTPGet != nil:
 		port := p.HTTPGet.Port.String()
 		path := p.HTTPGet.Path

@@ -56,8 +56,80 @@ func TestTranslateProbe_Exec(t *testing.T) {
 	if hc == nil {
 		t.Fatal("expected non-nil HealthCheckConfig")
 	}
-	if hc.Test[0] != "CMD-SHELL" || hc.Test[1] != "sh" {
+	if hc.Test[0] != "CMD" || hc.Test[1] != "sh" {
 		t.Errorf("unexpected exec test: %v", hc.Test)
+	}
+	// Full command should be ["CMD", "sh", "-c", "test -f /ready"]
+	if len(hc.Test) != 4 {
+		t.Errorf("expected 4 elements, got %d: %v", len(hc.Test), hc.Test)
+	}
+}
+
+func TestTranslatePodSpec_SourceKindLabel(t *testing.T) {
+	spec := corev1.PodSpec{
+		Containers: []corev1.Container{
+			{Name: "app", Image: "myapp:latest"},
+		},
+	}
+
+	// Deployment kind
+	svcs, _, _ := translatePodSpec("Deployment", "myapp", "default", spec, nil, nil, "default", nil, filter.New(nil))
+	if len(svcs) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(svcs))
+	}
+	if got := svcs[0].Labels["kdc.io/source-kind"]; got != "Deployment" {
+		t.Errorf("expected Deployment label, got %q", got)
+	}
+
+	// Pod kind
+	svcs, _, _ = translatePodSpec("Pod", "mypod", "default", spec, nil, nil, "default", nil, filter.New(nil))
+	if len(svcs) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(svcs))
+	}
+	if got := svcs[0].Labels["kdc.io/source-kind"]; got != "Pod" {
+		t.Errorf("expected Pod label, got %q", got)
+	}
+}
+
+func TestTranslateContainerPorts(t *testing.T) {
+	c := corev1.Container{
+		Name:  "app",
+		Image: "myapp:latest",
+		Ports: []corev1.ContainerPort{
+			{ContainerPort: 8080, Protocol: corev1.ProtocolTCP},
+			{ContainerPort: 9090, Protocol: corev1.ProtocolUDP},
+			{ContainerPort: 3000}, // no protocol — should default to tcp
+		},
+	}
+	svc := translateContainer("app", "default", c, corev1.PodSpec{}, nil, nil, nil, "default")
+
+	if len(svc.Ports) != 3 {
+		t.Fatalf("expected 3 ports, got %d", len(svc.Ports))
+	}
+
+	if svc.Ports[0].Target != 8080 {
+		t.Errorf("expected target 8080, got %d", svc.Ports[0].Target)
+	}
+	if svc.Ports[0].Published != "8080" {
+		t.Errorf("expected published 8080, got %q", svc.Ports[0].Published)
+	}
+	if svc.Ports[0].Protocol != "tcp" {
+		t.Errorf("expected protocol tcp, got %q", svc.Ports[0].Protocol)
+	}
+
+	if svc.Ports[1].Target != 9090 {
+		t.Errorf("expected target 9090, got %d", svc.Ports[1].Target)
+	}
+	if svc.Ports[1].Protocol != "udp" {
+		t.Errorf("expected protocol udp, got %q", svc.Ports[1].Protocol)
+	}
+
+	// Default protocol when empty
+	if svc.Ports[2].Target != 3000 {
+		t.Errorf("expected target 3000, got %d", svc.Ports[2].Target)
+	}
+	if svc.Ports[2].Protocol != "tcp" {
+		t.Errorf("expected default protocol tcp, got %q", svc.Ports[2].Protocol)
 	}
 }
 
@@ -127,7 +199,7 @@ func TestEnvFromConfigMap_UsesEnvFile(t *testing.T) {
 	}
 
 	spec := corev1.PodSpec{Containers: []corev1.Container{c}}
-	svcs, _, _ := translatePodSpec("myapp", "default", spec, cmIndex, secIndex, "default", nil, filter.New(nil))
+	svcs, _, _ := translatePodSpec("Pod", "myapp", "default", spec, cmIndex, secIndex, "default", nil, filter.New(nil))
 	if len(svcs) != 1 {
 		t.Fatalf("expected 1 service, got %d", len(svcs))
 	}
@@ -184,7 +256,7 @@ func TestEnvValueFrom_StillInlined(t *testing.T) {
 	}
 
 	spec := corev1.PodSpec{Containers: []corev1.Container{c}}
-	svcs, _, _ := translatePodSpec("myapp", "default", spec, cmIndex, secIndex, "default", nil, filter.New(nil))
+	svcs, _, _ := translatePodSpec("Pod", "myapp", "default", spec, cmIndex, secIndex, "default", nil, filter.New(nil))
 	svc := svcs[0]
 
 	// Single-key valueFrom references should still be inlined.

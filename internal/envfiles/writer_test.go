@@ -70,6 +70,23 @@ func TestWrite_Secret(t *testing.T) {
 	}
 }
 
+func TestQuoteEnvValue_DollarEscaping(t *testing.T) {
+	// A value containing $ should be quoted and $ escaped to $$
+	// so Docker Compose doesn't treat it as a variable reference.
+	got := quoteEnvValue("password$123")
+	want := `"password$$123"`
+	if got != want {
+		t.Errorf("quoteEnvValue(%q) = %q, want %q", "password$123", got, want)
+	}
+
+	// Multiple $ signs
+	got = quoteEnvValue("a$b$c")
+	want = `"a$$b$$c"`
+	if got != want {
+		t.Errorf("quoteEnvValue(%q) = %q, want %q", "a$b$c", got, want)
+	}
+}
+
 func TestWrite_Deterministic(t *testing.T) {
 	reg := registry.New()
 	reg.AddConfigMap(&corev1.ConfigMap{
