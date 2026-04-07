@@ -1,6 +1,10 @@
 package filter
 
-import "strings"
+import (
+	"strings"
+
+	kdctypes "github.com/morapet/kdc/pkg/types"
+)
 
 // Engine applies filter rules to containers and resources during translation.
 // A nil or default-constructed Engine is safe to use and acts as a pass-through
@@ -65,6 +69,21 @@ func (e *Engine) ShouldSkipResource(kind, name string) (skip bool, reason string
 		}
 	}
 	return false, ""
+}
+
+// SuppressKnownWarnings removes parse-time unsupported-kind warnings for any
+// resource kind that is explicitly listed in the resources.skip rules of this
+// engine's config. This lets users silence noise from Istio CRDs, NetworkPolicy,
+// and other infrastructure resources they already know are irrelevant for compose.
+func (e *Engine) SuppressKnownWarnings(warnings []kdctypes.UnsupportedResourceWarning) []kdctypes.UnsupportedResourceWarning {
+	out := warnings[:0:0] // keep underlying array but start fresh
+	for _, w := range warnings {
+		if skip, _ := e.ShouldSkipResource(w.Kind, w.Name); skip {
+			continue // user has this kind in resources.skip — no need to warn
+		}
+		out = append(out, w)
+	}
+	return out
 }
 
 // --- helpers -----------------------------------------------------------------

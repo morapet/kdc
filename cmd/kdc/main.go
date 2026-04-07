@@ -107,23 +107,8 @@ func runGenerate(opts generateOpts) error {
 		return fmt.Errorf("parse kustomize output: %w", err)
 	}
 
-	// Report parse-time warnings (unsupported resource kinds).
-	if len(warnings) > 0 {
-		if opts.verbose {
-			for _, w := range warnings {
-				fmt.Fprintf(os.Stderr, "warning: %s\n", w)
-			}
-		} else {
-			fmt.Fprintf(os.Stderr, "warning: skipped %d unsupported resource type(s). Use --verbose for details.\n", len(warnings))
-		}
-	}
-
-	// Require at least one workload.
-	if len(reg.Deployments) == 0 && len(reg.Pods) == 0 {
-		return fmt.Errorf("no translatable workload resources (Deployment or Pod) found in kustomize output")
-	}
-
-	// 3. Load filter config (optional).
+	// 3. Load filter config (optional) — must happen before warning reporting so
+	// that resource kinds explicitly listed in resources.skip are silenced.
 	var eng *filter.Engine
 	if opts.filtersPath != "" {
 		cfg, err := filter.Load(opts.filtersPath)
@@ -133,6 +118,24 @@ func runGenerate(opts generateOpts) error {
 		eng = filter.New(cfg)
 	} else {
 		eng = filter.New(nil)
+	}
+
+	// Report parse-time warnings for unknown resource kinds, suppressing any that
+	// the user has explicitly acknowledged via resources.skip in their filter file.
+	warnings = eng.SuppressKnownWarnings(warnings)
+	if len(warnings) > 0 {
+		if opts.verbose {
+			for _, w := range warnings {
+				fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: %d unsupported resource type(s) were skipped. Use --verbose for details.\n", len(warnings))
+		}
+	}
+
+	// Require at least one workload.
+	if len(reg.Deployments) == 0 && len(reg.Pods) == 0 {
+		return fmt.Errorf("no translatable workload resources (Deployment or Pod) found in kustomize output")
 	}
 
 	// 4. Translate to compose Project.

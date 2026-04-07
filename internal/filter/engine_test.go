@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	kdctypes "github.com/morapet/kdc/pkg/types"
 )
 
 // --- glob matching -----------------------------------------------------------
@@ -190,6 +192,50 @@ resources:
 	}
 	if len(cfg.Resources.Skip) != 1 || cfg.Resources.Skip[0].Kind != "HorizontalPodAutoscaler" {
 		t.Errorf("unexpected resources.skip: %+v", cfg.Resources.Skip)
+	}
+}
+
+// --- SuppressKnownWarnings ---------------------------------------------------
+
+func TestSuppressKnownWarnings(t *testing.T) {
+	eng := New(&Config{
+		Resources: ResourceFilters{
+			Skip: []ResourceMatcher{
+				{Kind: "DestinationRule"},
+				{Kind: "VirtualService"},
+				{Kind: "NetworkPolicy"},
+			},
+		},
+	})
+
+	warnings := []kdctypes.UnsupportedResourceWarning{
+		{APIVersion: "networking.istio.io/v1beta1", Kind: "DestinationRule", Name: "web-dr"},
+		{APIVersion: "networking.istio.io/v1beta1", Kind: "VirtualService", Name: "web-vs"},
+		{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Name: "deny-all"},
+		{APIVersion: "autoscaling/v2", Kind: "HorizontalPodAutoscaler", Name: "web-hpa"}, // NOT in skip
+		{APIVersion: "apps/v1", Kind: "StatefulSet", Name: "redis"},                       // NOT in skip
+	}
+
+	remaining := eng.SuppressKnownWarnings(warnings)
+
+	if len(remaining) != 2 {
+		t.Fatalf("expected 2 remaining warnings, got %d: %v", len(remaining), remaining)
+	}
+	for _, w := range remaining {
+		if w.Kind == "DestinationRule" || w.Kind == "VirtualService" || w.Kind == "NetworkPolicy" {
+			t.Errorf("kind %q should have been suppressed", w.Kind)
+		}
+	}
+}
+
+func TestSuppressKnownWarnings_NoOp(t *testing.T) {
+	eng := New(nil)
+	warnings := []kdctypes.UnsupportedResourceWarning{
+		{Kind: "DestinationRule", Name: "dr"},
+	}
+	remaining := eng.SuppressKnownWarnings(warnings)
+	if len(remaining) != 1 {
+		t.Errorf("nil engine should not suppress any warnings, got %d", len(remaining))
 	}
 }
 
