@@ -6,8 +6,12 @@ import (
 
 	comptypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/morapet/kdc/internal/filter"
+	"github.com/morapet/kdc/internal/registry"
+	kdctypes "github.com/morapet/kdc/pkg/types"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
@@ -265,5 +269,85 @@ func TestEnvValueFrom_StillInlined(t *testing.T) {
 	}
 	if svc.Environment["DB_PASSWORD"] == nil || *svc.Environment["DB_PASSWORD"] != "s3cr3t" {
 		t.Errorf("expected DB_PASSWORD=s3cr3t inlined, got %v", svc.Environment["DB_PASSWORD"])
+	}
+}
+
+func TestTranslateStatefulSet_SourceKindLabel(t *testing.T) {
+	ss := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "default"},
+		Spec: appsv1.StatefulSetSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "db", Image: "postgres:16"},
+					},
+				},
+			},
+		},
+	}
+
+	svcs, _, _ := translateStatefulSet(ss, nil, nil, "default", filter.New(nil))
+	if len(svcs) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(svcs))
+	}
+	if got := svcs[0].Labels[kdctypes.AnnotationSourceKind]; got != "StatefulSet" {
+		t.Errorf("expected source-kind=StatefulSet, got %q", got)
+	}
+	if got := svcs[0].Labels[kdctypes.AnnotationSourceName]; got != "db" {
+		t.Errorf("expected source-name=db, got %q", got)
+	}
+}
+
+func TestApplyServiceAliases(t *testing.T) {
+	reg := registry.New()
+
+	// A Deployment with pod template labels app=web
+	reg.Deployments = append(reg.Deployments, &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "default"},
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{"app": "web"},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "web", Image: "nginx:latest"}},
+				},
+			},
+		},
+	})
+
+	// A K8s Service selecting app=web
+	reg.AddService(&corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "web-svc", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": "web"},
+		},
+	})
+
+	// Build a compose services map as the translator would
+	services := comptypes.Services{
+		"web": comptypes.ServiceConfig{
+			Name:  "web",
+			Image: "nginx:latest",
+			Labels: comptypes.Labels{
+				kdctypes.AnnotationSourceKind:      "Deployment",
+				kdctypes.AnnotationSourceName:      "web",
+				kdctypes.AnnotationSourceNamespace: "default",
+			},
+		},
+	}
+
+	applyServiceAliases(services, reg)
+
+	webSvc := services["web"]
+	if webSvc.Networks == nil {
+		t.Fatal("expected networks to be set")
+	}
+	defaultNet, ok := webSvc.Networks["default"]
+	if !ok {
+		t.Fatal("expected 'default' network entry")
+	}
+	if len(defaultNet.Aliases) == 0 || defaultNet.Aliases[0] != "web-svc" {
+		t.Errorf("expected alias 'web-svc', got %v", defaultNet.Aliases)
 	}
 }

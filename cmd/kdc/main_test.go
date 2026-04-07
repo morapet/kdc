@@ -60,3 +60,36 @@ func TestGenerate_GoldenFile(t *testing.T) {
 		t.Errorf("output does not match golden file.\nGot:\n%s\nWant:\n%s", got, want)
 	}
 }
+
+func TestGenerate_DryRun_NoConfigSecretFiles(t *testing.T) {
+	if _, err := exec.LookPath("kustomize"); err != nil {
+		t.Skip("kustomize not in PATH; skipping integration test")
+	}
+
+	repoRoot := filepath.Join("..", "..")
+	kustomizePath := filepath.Join(repoRoot, "testdata", "kustomize", "overlays", "dev")
+	overridesPath := filepath.Join(repoRoot, "testdata", "kdc-overrides.yaml")
+	filtersPath := filepath.Join(repoRoot, "testdata", "kdc-filters.yaml")
+
+	outDir := t.TempDir()
+	outFile := filepath.Join(outDir, "docker-compose.yaml")
+
+	err := runGenerate(generateOpts{
+		kustomizePath: kustomizePath,
+		outputPath:    outFile,
+		overridePath:  overridesPath,
+		filtersPath:   filtersPath,
+		projectName:   "dev",
+		namespace:     "default",
+		dryRun:        true,
+	})
+	if err != nil {
+		t.Fatalf("runGenerate dry-run error: %v", err)
+	}
+
+	// In dry-run mode, no .kdc directory should be written.
+	kdcDir := filepath.Join(outDir, ".kdc")
+	if _, err := os.Stat(kdcDir); err == nil {
+		t.Errorf("dry-run should not write .kdc directory, but %s exists", kdcDir)
+	}
+}

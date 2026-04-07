@@ -109,3 +109,80 @@ func TestWrite_Deterministic(t *testing.T) {
 		t.Errorf("keys not sorted in:\n%s", string(b1))
 	}
 }
+
+func TestWriteConfigFiles(t *testing.T) {
+	reg := registry.New()
+	reg.AddConfigMap(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "app-config"},
+		Data: map[string]string{
+			"app.conf":      "key=value",
+			"settings.json": "{}",
+		},
+	})
+
+	dir := t.TempDir()
+	if err := WriteConfigFiles(reg, dir); err != nil {
+		t.Fatalf("WriteConfigFiles error: %v", err)
+	}
+
+	// Verify app.conf
+	appConf, err := os.ReadFile(filepath.Join(dir, "app-config", "app.conf"))
+	if err != nil {
+		t.Fatalf("read app.conf: %v", err)
+	}
+	if string(appConf) != "key=value" {
+		t.Errorf("unexpected app.conf content: %q", string(appConf))
+	}
+
+	// Verify settings.json
+	settingsJSON, err := os.ReadFile(filepath.Join(dir, "app-config", "settings.json"))
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+	if string(settingsJSON) != "{}" {
+		t.Errorf("unexpected settings.json content: %q", string(settingsJSON))
+	}
+
+	// Verify file permissions are 0644
+	info, err := os.Stat(filepath.Join(dir, "app-config", "app.conf"))
+	if err != nil {
+		t.Fatalf("stat app.conf: %v", err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Errorf("expected 0644 permissions, got %v", info.Mode().Perm())
+	}
+}
+
+func TestWriteSecretFiles(t *testing.T) {
+	reg := registry.New()
+	reg.AddSecret(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "tls-cert"},
+		Data: map[string][]byte{
+			"tls.crt": []byte("cert-data"),
+			"tls.key": []byte("key-data"),
+		},
+	})
+
+	dir := t.TempDir()
+	if err := WriteSecretFiles(reg, dir); err != nil {
+		t.Fatalf("WriteSecretFiles error: %v", err)
+	}
+
+	// Verify tls.crt
+	cert, err := os.ReadFile(filepath.Join(dir, "tls-cert", "tls.crt"))
+	if err != nil {
+		t.Fatalf("read tls.crt: %v", err)
+	}
+	if string(cert) != "cert-data" {
+		t.Errorf("unexpected tls.crt content: %q", string(cert))
+	}
+
+	// Verify file permissions are 0600
+	info, err := os.Stat(filepath.Join(dir, "tls-cert", "tls.crt"))
+	if err != nil {
+		t.Fatalf("stat tls.crt: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("expected 0600 permissions, got %v", info.Mode().Perm())
+	}
+}

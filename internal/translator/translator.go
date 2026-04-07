@@ -82,6 +82,26 @@ func (t *Translator) Translate() (*TranslateResult, error) {
 		}
 	}
 
+	// StatefulSets → services
+	for _, s := range t.reg.StatefulSets {
+		if skip, reason := t.engine.ShouldSkipResource("StatefulSet", s.Name); skip {
+			messages = append(messages, fmt.Sprintf("skipped StatefulSet %q: %s", s.Name, reason))
+			continue
+		}
+		svcs, replacements, msgs := translateStatefulSet(s, cmIndex, secIndex, t.ctx.Namespace, t.engine)
+		messages = append(messages, msgs...)
+		for _, svc := range svcs {
+			project.Services[svc.Name] = svc
+		}
+		for _, r := range replacements {
+			if !injected[r.Name] {
+				project.Services[r.Name] = r
+				injected[r.Name] = true
+				messages = append(messages, fmt.Sprintf("injected replacement service %q", r.Name))
+			}
+		}
+	}
+
 	// Standalone Pods → services
 	for _, p := range t.reg.Pods {
 		if skip, reason := t.engine.ShouldSkipResource("Pod", p.Name); skip {
@@ -101,6 +121,9 @@ func (t *Translator) Translate() (*TranslateResult, error) {
 			}
 		}
 	}
+
+	// K8s Services → network aliases on matching compose services.
+	applyServiceAliases(project.Services, t.reg)
 
 	return &TranslateResult{Project: project, Messages: messages}, nil
 }

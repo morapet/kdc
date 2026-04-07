@@ -134,8 +134,8 @@ func runGenerate(opts generateOpts) error {
 	}
 
 	// Require at least one workload.
-	if len(reg.Deployments) == 0 && len(reg.Pods) == 0 {
-		return fmt.Errorf("no translatable workload resources (Deployment or Pod) found in kustomize output")
+	if len(reg.Deployments) == 0 && len(reg.StatefulSets) == 0 && len(reg.Pods) == 0 {
+		return fmt.Errorf("no translatable workload resources (Deployment, StatefulSet, or Pod) found in kustomize output")
 	}
 
 	// 4. Translate to compose Project.
@@ -162,11 +162,25 @@ func runGenerate(opts generateOpts) error {
 	}
 
 	// 6. Write .env files for ConfigMaps and Secrets (envFrom references).
-	var envDir string
+	var envDir, configsDir, secretsDir string
 	if !opts.dryRun {
-		envDir = filepath.Join(filepath.Dir(opts.outputPath), ".kdc", "envs")
+		kdcDir := filepath.Join(filepath.Dir(opts.outputPath), ".kdc")
+		envDir = filepath.Join(kdcDir, "envs")
+		configsDir = filepath.Join(kdcDir, "configs")
+		secretsDir = filepath.Join(kdcDir, "secrets")
+
 		if err := envfiles.Write(reg, envDir); err != nil {
 			return fmt.Errorf("write env files: %w", err)
+		}
+
+		// Write ConfigMap volume files.
+		if err := envfiles.WriteConfigFiles(reg, configsDir); err != nil {
+			return fmt.Errorf("write config files: %w", err)
+		}
+
+		// Write Secret volume files.
+		if err := envfiles.WriteSecretFiles(reg, secretsDir); err != nil {
+			return fmt.Errorf("write secret files: %w", err)
 		}
 	}
 
@@ -182,6 +196,8 @@ func runGenerate(opts generateOpts) error {
 	if dest != "-" {
 		fmt.Fprintf(os.Stderr, "wrote %s\n", dest)
 		fmt.Fprintf(os.Stderr, "wrote env files to %s/\n", envDir)
+		fmt.Fprintf(os.Stderr, "wrote config files to %s/\n", configsDir)
+		fmt.Fprintf(os.Stderr, "wrote secret files to %s/\n", secretsDir)
 	}
 	return nil
 }

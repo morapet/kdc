@@ -69,6 +69,58 @@ func writeEnvFile(path string, data map[string]string, sourceKind, sourceName st
 	return nil
 }
 
+// WriteConfigFiles materializes ConfigMap data as individual files under baseDir.
+// For each ConfigMap, a directory <baseDir>/<configmap-name>/ is created and each
+// key in Data (and BinaryData) is written as a separate file at 0644 permissions.
+func WriteConfigFiles(reg *registry.ResourceRegistry, baseDir string) error {
+	for _, cm := range reg.ConfigMaps {
+		dir := filepath.Join(baseDir, cm.Name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create config dir %q: %w", dir, err)
+		}
+		for key, value := range cm.Data {
+			path := filepath.Join(dir, key)
+			if err := os.WriteFile(path, []byte(value), 0o644); err != nil {
+				return fmt.Errorf("write config file %q: %w", path, err)
+			}
+		}
+		for key, value := range cm.BinaryData {
+			path := filepath.Join(dir, key)
+			if err := os.WriteFile(path, value, 0o644); err != nil {
+				return fmt.Errorf("write config binary file %q: %w", path, err)
+			}
+		}
+	}
+	return nil
+}
+
+// WriteSecretFiles materializes Secret data as individual files under baseDir.
+// For each Secret, a directory <baseDir>/<secret-name>/ is created and each key
+// in Data and StringData is written as a separate file at 0600 permissions.
+func WriteSecretFiles(reg *registry.ResourceRegistry, baseDir string) error {
+	for _, sec := range reg.Secrets {
+		dir := filepath.Join(baseDir, sec.Name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create secret dir %q: %w", dir, err)
+		}
+		// Write binary data (already base64-decoded by K8s JSON unmarshaller).
+		for key, value := range sec.Data {
+			path := filepath.Join(dir, key)
+			if err := os.WriteFile(path, value, 0o600); err != nil {
+				return fmt.Errorf("write secret file %q: %w", path, err)
+			}
+		}
+		// StringData takes precedence over Data for overlapping keys.
+		for key, value := range sec.StringData {
+			path := filepath.Join(dir, key)
+			if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+				return fmt.Errorf("write secret string file %q: %w", path, err)
+			}
+		}
+	}
+	return nil
+}
+
 // quoteEnvValue wraps a value in double quotes if it contains spaces, #, or =,
 // escaping any existing double quotes within.
 func quoteEnvValue(v string) string {
