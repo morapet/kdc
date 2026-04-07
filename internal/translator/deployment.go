@@ -296,6 +296,10 @@ func translateProbe(p *corev1.Probe) *comptypes.HealthCheckConfig {
 		test = append([]string{"CMD"}, p.Exec.Command...)
 	case p.HTTPGet != nil:
 		port := p.HTTPGet.Port.String()
+		// Use a TCP-level check via bash's /dev/tcp built-in. This requires no
+		// external binaries (no curl/wget) and works on minimal images that have
+		// bash. The HTTP path is intentionally ignored — for local dev, verifying
+		// the port is open is sufficient.
 		test = []string{"CMD-SHELL", fmt.Sprintf("bash -c '(echo >/dev/tcp/localhost/%s) 2>/dev/null'", port)}
 	case p.TCPSocket != nil:
 		port := p.TCPSocket.Port.String()
