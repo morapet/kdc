@@ -5,25 +5,26 @@ import (
 	"time"
 
 	comptypes "github.com/compose-spec/compose-go/v2/types"
+	"github.com/morapet/kdc/internal/filter"
 	kdctypes "github.com/morapet/kdc/pkg/types"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 )
 
-// translateDeployment converts a Deployment into one or more compose ServiceConfigs
-// (one per container). The primary container's service takes the Deployment name;
-// subsequent containers get "<deployment>-<container>" names.
+// translateDeployment converts a Deployment into compose services.
+// Returns (translated services, injected replacement services, info messages).
 func translateDeployment(
 	d *appsv1.Deployment,
 	cmIndex map[string]map[string]string,
 	secIndex map[string]map[string]string,
 	defaultNamespace string,
-) []comptypes.ServiceConfig {
+	eng *filter.Engine,
+) (services, replacements []comptypes.ServiceConfig, messages []string) {
 	ns := d.Namespace
 	if ns == "" {
 		ns = defaultNamespace
 	}
-	return translatePodSpec(d.Name, ns, d.Spec.Template.Spec, cmIndex, secIndex, defaultNamespace, d.Labels)
+	return translatePodSpec(d.Name, ns, d.Spec.Template.Spec, cmIndex, secIndex, defaultNamespace, d.Labels, eng)
 }
 
 // translatePod converts a standalone Pod into compose services.
@@ -32,12 +33,13 @@ func translatePod(
 	cmIndex map[string]map[string]string,
 	secIndex map[string]map[string]string,
 	defaultNamespace string,
-) []comptypes.ServiceConfig {
+	eng *filter.Engine,
+) (services, replacements []comptypes.ServiceConfig, messages []string) {
 	ns := p.Namespace
 	if ns == "" {
 		ns = defaultNamespace
 	}
-	return translatePodSpec(p.Name, ns, p.Spec, cmIndex, secIndex, defaultNamespace, p.Labels)
+	return translatePodSpec(p.Name, ns, p.Spec, cmIndex, secIndex, defaultNamespace, p.Labels, eng)
 }
 
 func translatePodSpec(
@@ -48,16 +50,51 @@ func translatePodSpec(
 	secIndex map[string]map[string]string,
 	defaultNamespace string,
 	sourceLabels map[string]string,
-) []comptypes.ServiceConfig {
+	eng *filter.Engine,
+) (services, replacements []comptypes.ServiceConfig, messages []string) {
 	// Build a map of volume name -> source type for reference resolution.
 	volSources := buildVolumeSources(spec.Volumes)
 
-	var services []comptypes.ServiceConfig
-	for i, c := range spec.Containers {
+	// Track which replacement service names have already been queued (per pod-spec)
+	// to avoid adding the same replacement twice from multi-container pods.
+	replacementSeen := map[string]bool{}
+
+	// Process init containers — they are not translated but we log skips.
+	for _, ic := range spec.InitContainers {
+		_, reason := eng.ShouldSkipInitContainer(ic.Name, ic.Image)
+		messages = append(messages, fmt.Sprintf(
+			"skipped init container %q (image=%s): %s", ic.Name, ic.Image, reason))
+	}
+
+	// Process regular containers.
+	primary := true
+	for _, c := range spec.Containers {
+		// --- filter: skip ---
+		if skip, reason := eng.ShouldSkipContainer(c.Name, c.Image); skip {
+			messages = append(messages, fmt.Sprintf(
+				"skipped container %q (image=%s): %s", c.Name, c.Image, reason))
+			continue
+		}
+
+		// --- filter: replace ---
+		if rep := eng.FindReplacement(c.Name, c.Image); rep != nil {
+			messages = append(messages, fmt.Sprintf(
+				"replaced container %q (image=%s) with service %q (image=%s)",
+				c.Name, c.Image, rep.With.Name, rep.With.Image))
+			if !replacementSeen[rep.With.Name] {
+				replacementSeen[rep.With.Name] = true
+				replacements = append(replacements, rep.With.ToServiceConfig())
+			}
+			continue
+		}
+
+		// --- normal translation ---
 		name := ownerName
-		if i > 0 {
+		if !primary {
 			name = ownerName + "-" + c.Name
 		}
+		primary = false
+
 		svc := translateContainer(name, namespace, c, spec, volSources, cmIndex, secIndex, defaultNamespace)
 		svc.Labels = comptypes.Labels{
 			kdctypes.AnnotationSourceKind:      "Deployment",
@@ -66,7 +103,7 @@ func translatePodSpec(
 		}
 		services = append(services, svc)
 	}
-	return services
+	return services, replacements, messages
 }
 
 // volumeSource describes what a pod Volume is backed by.

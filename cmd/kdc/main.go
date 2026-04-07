@@ -7,6 +7,7 @@ import (
 
 	"github.com/morapet/kdc/internal/compose"
 	"github.com/morapet/kdc/internal/envfiles"
+	"github.com/morapet/kdc/internal/filter"
 	"github.com/morapet/kdc/internal/kustomize"
 	"github.com/morapet/kdc/internal/override"
 	"github.com/morapet/kdc/internal/parser"
@@ -35,6 +36,7 @@ func generateCmd() *cobra.Command {
 		kustomizePath string
 		outputPath    string
 		overridePath  string
+		filtersPath   string
 		projectName   string
 		namespace     string
 		verbose       bool
@@ -45,35 +47,56 @@ func generateCmd() *cobra.Command {
 		Use:   "generate",
 		Short: "Generate docker-compose.yaml from a Kustomize overlay",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runGenerate(kustomizePath, outputPath, overridePath, projectName, namespace, verbose, dryRun)
+			return runGenerate(generateOpts{
+				kustomizePath: kustomizePath,
+				outputPath:    outputPath,
+				overridePath:  overridePath,
+				filtersPath:   filtersPath,
+				projectName:   projectName,
+				namespace:     namespace,
+				verbose:       verbose,
+				dryRun:        dryRun,
+			})
 		},
 	}
 
 	cmd.Flags().StringVarP(&kustomizePath, "kustomize", "k", "", "Path passed to `kustomize build` (required)")
 	cmd.Flags().StringVarP(&outputPath, "output", "o", "docker-compose.yaml", "Output path (use \"-\" for stdout)")
-	cmd.Flags().StringVar(&overridePath, "overrides", "", "Optional kdc-overrides.yaml path")
+	cmd.Flags().StringVar(&overridePath, "overrides", "", "Optional kdc-overrides.yaml for compose-level overrides")
+	cmd.Flags().StringVar(&filtersPath, "filters", "", "Optional kdc-filters.yaml to skip or replace containers/resources")
 	cmd.Flags().StringVar(&projectName, "project", "", "Compose project name (default: overlay dir basename)")
 	cmd.Flags().StringVar(&namespace, "namespace", "default", "Kubernetes namespace for resource lookups")
-	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print per-resource warnings to stderr")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print filter messages and per-resource warnings to stderr")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print YAML to stdout, do not write file")
 
 	_ = cmd.MarkFlagRequired("kustomize")
 	return cmd
 }
 
-func runGenerate(kustomizePath, outputPath, overridePath, projectName, namespace string, verbose, dryRun bool) error {
+type generateOpts struct {
+	kustomizePath string
+	outputPath    string
+	overridePath  string
+	filtersPath   string
+	projectName   string
+	namespace     string
+	verbose       bool
+	dryRun        bool
+}
+
+func runGenerate(opts generateOpts) error {
 	// Resolve project name.
-	if projectName == "" {
-		abs, err := filepath.Abs(kustomizePath)
+	if opts.projectName == "" {
+		abs, err := filepath.Abs(opts.kustomizePath)
 		if err == nil {
-			projectName = filepath.Base(abs)
+			opts.projectName = filepath.Base(abs)
 		} else {
-			projectName = filepath.Base(kustomizePath)
+			opts.projectName = filepath.Base(opts.kustomizePath)
 		}
 	}
 
 	// 1. Run kustomize build.
-	rawYAML, err := kustomize.Build(kustomizePath)
+	rawYAML, err := kustomize.Build(opts.kustomizePath)
 	if err != nil {
 		return err
 	}
@@ -84,9 +107,9 @@ func runGenerate(kustomizePath, outputPath, overridePath, projectName, namespace
 		return fmt.Errorf("parse kustomize output: %w", err)
 	}
 
-	// Report warnings.
+	// Report parse-time warnings (unsupported resource kinds).
 	if len(warnings) > 0 {
-		if verbose {
+		if opts.verbose {
 			for _, w := range warnings {
 				fmt.Fprintf(os.Stderr, "warning: %s\n", w)
 			}
@@ -100,36 +123,53 @@ func runGenerate(kustomizePath, outputPath, overridePath, projectName, namespace
 		return fmt.Errorf("no translatable workload resources (Deployment or Pod) found in kustomize output")
 	}
 
-	// 3. Translate to compose Project.
-	ctx := kdctypes.TranslationContext{
-		Namespace:   namespace,
-		ProjectName: projectName,
+	// 3. Load filter config (optional).
+	var eng *filter.Engine
+	if opts.filtersPath != "" {
+		cfg, err := filter.Load(opts.filtersPath)
+		if err != nil {
+			return err
+		}
+		eng = filter.New(cfg)
+	} else {
+		eng = filter.New(nil)
 	}
-	t := translator.New(reg, ctx)
-	project, err := t.Translate()
+
+	// 4. Translate to compose Project.
+	ctx := kdctypes.TranslationContext{
+		Namespace:   opts.namespace,
+		ProjectName: opts.projectName,
+	}
+	result, err := translator.New(reg, ctx, eng).Translate()
 	if err != nil {
 		return fmt.Errorf("translate: %w", err)
 	}
 
-	// 4. Apply overrides.
-	project, err = override.Apply(project, overridePath)
+	// Print translation messages (filter actions, injections, etc.).
+	if opts.verbose {
+		for _, msg := range result.Messages {
+			fmt.Fprintf(os.Stderr, "info: %s\n", msg)
+		}
+	}
+
+	// 5. Apply compose-level overrides.
+	project, err := override.Apply(result.Project, opts.overridePath)
 	if err != nil {
 		return err
 	}
 
-	// 5. Write .env files for ConfigMaps and Secrets referenced via envFrom.
-	// These go into .kdc/envs/ next to the output file (or cwd for stdout/dry-run).
-	envDir := filepath.Join(filepath.Dir(outputPath), ".kdc", "envs")
-	if dryRun {
+	// 6. Write .env files for ConfigMaps and Secrets (envFrom references).
+	envDir := filepath.Join(filepath.Dir(opts.outputPath), ".kdc", "envs")
+	if opts.dryRun {
 		envDir = filepath.Join(".kdc", "envs")
 	}
 	if err := envfiles.Write(reg, envDir); err != nil {
 		return fmt.Errorf("write env files: %w", err)
 	}
 
-	// 6. Write compose output.
-	dest := outputPath
-	if dryRun {
+	// 7. Write compose output.
+	dest := opts.outputPath
+	if opts.dryRun {
 		dest = "-"
 	}
 	if err := compose.Write(project, dest); err != nil {

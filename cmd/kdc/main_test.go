@@ -14,7 +14,6 @@ import (
 //
 //	UPDATE_GOLDEN=1 go test ./cmd/kdc/
 func TestGenerate_GoldenFile(t *testing.T) {
-	// Locate kustomize binary.
 	if _, err := exec.LookPath("kustomize"); err != nil {
 		t.Skip("kustomize not in PATH; skipping integration test")
 	}
@@ -23,10 +22,18 @@ func TestGenerate_GoldenFile(t *testing.T) {
 	goldenPath := filepath.Join(repoRoot, "testdata", "golden", "docker-compose.yaml")
 	kustomizePath := filepath.Join(repoRoot, "testdata", "kustomize", "overlays", "dev")
 	overridesPath := filepath.Join(repoRoot, "testdata", "kdc-overrides.yaml")
+	filtersPath := filepath.Join(repoRoot, "testdata", "kdc-filters.yaml")
 
 	outFile := filepath.Join(t.TempDir(), "docker-compose.yaml")
 
-	err := runGenerate(kustomizePath, outFile, overridesPath, "dev", "default", false, false)
+	err := runGenerate(generateOpts{
+		kustomizePath: kustomizePath,
+		outputPath:    outFile,
+		overridePath:  overridesPath,
+		filtersPath:   filtersPath,
+		projectName:   "dev",
+		namespace:     "default",
+	})
 	if err != nil {
 		t.Fatalf("runGenerate error: %v", err)
 	}

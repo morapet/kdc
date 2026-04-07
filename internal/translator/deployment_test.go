@@ -5,6 +5,7 @@ import (
 	"time"
 
 	comptypes "github.com/compose-spec/compose-go/v2/types"
+	"github.com/morapet/kdc/internal/filter"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -126,7 +127,7 @@ func TestEnvFromConfigMap_UsesEnvFile(t *testing.T) {
 	}
 
 	spec := corev1.PodSpec{Containers: []corev1.Container{c}}
-	svcs := translatePodSpec("myapp", "default", spec, cmIndex, secIndex, "default", nil)
+	svcs, _, _ := translatePodSpec("myapp", "default", spec, cmIndex, secIndex, "default", nil, filter.New(nil))
 	if len(svcs) != 1 {
 		t.Fatalf("expected 1 service, got %d", len(svcs))
 	}
@@ -183,7 +184,7 @@ func TestEnvValueFrom_StillInlined(t *testing.T) {
 	}
 
 	spec := corev1.PodSpec{Containers: []corev1.Container{c}}
-	svcs := translatePodSpec("myapp", "default", spec, cmIndex, secIndex, "default", nil)
+	svcs, _, _ := translatePodSpec("myapp", "default", spec, cmIndex, secIndex, "default", nil, filter.New(nil))
 	svc := svcs[0]
 
 	// Single-key valueFrom references should still be inlined.
