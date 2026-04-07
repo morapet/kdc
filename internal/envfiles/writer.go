@@ -120,6 +120,8 @@ func WriteSecretFiles(reg *registry.ResourceRegistry, baseDir string) error {
 	}
 	return nil
 }
+
+// quoteEnvValue wraps a value in double quotes if it contains spaces, #, or =,
 // escaping any existing double quotes within.
 func quoteEnvValue(v string) string {
 	if strings.ContainsAny(v, " \t\n#\"'\\$") {
