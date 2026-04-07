@@ -162,12 +162,12 @@ func runGenerate(opts generateOpts) error {
 	}
 
 	// 6. Write .env files for ConfigMaps and Secrets (envFrom references).
-	envDir := filepath.Join(filepath.Dir(opts.outputPath), ".kdc", "envs")
-	if opts.dryRun {
-		envDir = filepath.Join(".kdc", "envs")
-	}
-	if err := envfiles.Write(reg, envDir); err != nil {
-		return fmt.Errorf("write env files: %w", err)
+	var envDir string
+	if !opts.dryRun {
+		envDir = filepath.Join(filepath.Dir(opts.outputPath), ".kdc", "envs")
+		if err := envfiles.Write(reg, envDir); err != nil {
+			return fmt.Errorf("write env files: %w", err)
+		}
 	}
 
 	// 7. Write compose output.
