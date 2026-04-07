@@ -296,14 +296,10 @@ func translateProbe(p *corev1.Probe) *comptypes.HealthCheckConfig {
 		test = append([]string{"CMD"}, p.Exec.Command...)
 	case p.HTTPGet != nil:
 		port := p.HTTPGet.Port.String()
-		path := p.HTTPGet.Path
-		if path == "" {
-			path = "/"
-		}
-		test = []string{"CMD-SHELL", fmt.Sprintf("curl -sf http://localhost:%s%s", port, path)}
+		test = []string{"CMD-SHELL", fmt.Sprintf("bash -c '(echo >/dev/tcp/localhost/%s) 2>/dev/null'", port)}
 	case p.TCPSocket != nil:
 		port := p.TCPSocket.Port.String()
-		test = []string{"CMD-SHELL", fmt.Sprintf("nc -z localhost %s", port)}
+		test = []string{"CMD-SHELL", fmt.Sprintf("bash -c '(echo >/dev/tcp/localhost/%s) 2>/dev/null'", port)}
 	default:
 		return nil
 	}
