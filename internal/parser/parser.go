@@ -78,6 +78,13 @@ func Parse(raw []byte) (*registry.ResourceRegistry, []kdctypes.UnsupportedResour
 			}
 			reg.Deployments = append(reg.Deployments, obj)
 
+		case "StatefulSet":
+			obj := &appsv1.StatefulSet{}
+			if err := unmarshalK8s(jsonBytes, obj); err != nil {
+				return nil, nil, fmt.Errorf("unmarshal StatefulSet %q: %w", meta.Metadata.Name, err)
+			}
+			reg.StatefulSets = append(reg.StatefulSets, obj)
+
 		case "Pod":
 			obj := &corev1.Pod{}
 			if err := unmarshalK8s(jsonBytes, obj); err != nil {
@@ -105,6 +112,13 @@ func Parse(raw []byte) (*registry.ResourceRegistry, []kdctypes.UnsupportedResour
 				return nil, nil, fmt.Errorf("unmarshal PVC %q: %w", meta.Metadata.Name, err)
 			}
 			reg.PVCs = append(reg.PVCs, obj)
+
+		case "Service":
+			obj := &corev1.Service{}
+			if err := unmarshalK8s(jsonBytes, obj); err != nil {
+				return nil, nil, fmt.Errorf("unmarshal Service %q: %w", meta.Metadata.Name, err)
+			}
+			reg.AddService(obj)
 
 		default:
 			warnings = append(warnings, kdctypes.UnsupportedResourceWarning{

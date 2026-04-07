@@ -28,6 +28,22 @@ func translateDeployment(
 	return translatePodSpec("Deployment", d.Name, ns, d.Spec.Template.Spec, cmIndex, secIndex, defaultNamespace, d.Labels, eng)
 }
 
+// translateStatefulSet converts a StatefulSet into compose services.
+// Returns (translated services, injected replacement services, info messages).
+func translateStatefulSet(
+	s *appsv1.StatefulSet,
+	cmIndex map[string]map[string]string,
+	secIndex map[string]map[string]string,
+	defaultNamespace string,
+	eng *filter.Engine,
+) (services, replacements []comptypes.ServiceConfig, messages []string) {
+	ns := s.Namespace
+	if ns == "" {
+		ns = defaultNamespace
+	}
+	return translatePodSpec("StatefulSet", s.Name, ns, s.Spec.Template.Spec, cmIndex, secIndex, defaultNamespace, s.Labels, eng)
+}
+
 // translatePod converts a standalone Pod into compose services.
 func translatePod(
 	p *corev1.Pod,
