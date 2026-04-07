@@ -30,7 +30,7 @@ services:
       start_period: 5s
       test:
       - CMD-SHELL
-      - curl -sf http://localhost:80/healthz
+      - bash -c '(echo >/dev/tcp/localhost/80) 2>/dev/null'
       timeout: 3s
     image: nginx:1.25
     labels:

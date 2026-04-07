@@ -35,7 +35,7 @@ func TestTranslateProbe_HTTP(t *testing.T) {
 	if hc.Test[0] != "CMD-SHELL" {
 		t.Errorf("expected CMD-SHELL, got %q", hc.Test[0])
 	}
-	if hc.Test[1] != "curl -sf http://localhost:8080/health" {
+	if hc.Test[1] != "bash -c '(echo >/dev/tcp/localhost/8080) 2>/dev/null'" {
 		t.Errorf("unexpected test command: %q", hc.Test[1])
 	}
 
@@ -143,7 +143,7 @@ func TestTranslateProbe_TCP(t *testing.T) {
 	if hc == nil {
 		t.Fatal("expected non-nil HealthCheckConfig")
 	}
-	if hc.Test[1] != "nc -z localhost 5432" {
+	if hc.Test[1] != "bash -c '(echo >/dev/tcp/localhost/5432) 2>/dev/null'" {
 		t.Errorf("unexpected tcp test: %q", hc.Test[1])
 	}
 }
