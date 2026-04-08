@@ -114,6 +114,53 @@ kdc generate -k <path> [flags]
 | Resource requests/limits | `deploy.resources` |
 | `EmptyDir` volumes | `tmpfs` mounts |
 
+### ConfigMap / Secret volume mounts and `subPath`
+
+When a `volumeMount` has a `subPath`, Kubernetes mounts only that single key as a
+file at `mountPath`.  kdc respects this: when `subPath` is set the bind-mount
+source is narrowed to the specific file inside the `.kdc` directory rather than
+the whole directory:
+
+| Mount type | `subPath` | Compose bind source |
+|---|---|---|
+| `configMap` | *(absent)* | `.kdc/configs/<name>/` (directory) |
+| `configMap` | `database-init.sh` | `.kdc/configs/<name>/database-init.sh` (file) |
+| `secret` | *(absent)* | `.kdc/secrets/<name>/` (directory) |
+| `secret` | `tls.crt` | `.kdc/secrets/<name>/tls.crt` (file) |
+
+**Example — Postgres init script via ConfigMap `subPath`:**
+
+```yaml
+# Kubernetes manifest (abbreviated)
+volumeMounts:
+  - name: init-scripts
+    mountPath: /docker-entrypoint-initdb.d/database-init.sh
+    subPath: database-init.sh
+    readOnly: true
+volumes:
+  - name: init-scripts
+    configMap:
+      name: pricing-database-init-2fkb264hk4
+```
+
+kdc generates:
+
+```yaml
+volumes:
+  - type: bind
+    source: ./.kdc/configs/pricing-database-init-2fkb264hk4/database-init.sh
+    target: /docker-entrypoint-initdb.d/database-init.sh
+    read_only: true
+```
+
+**Limitations:**
+
+- `subPathExpr` (Downward API variable substitution) cannot be evaluated at
+  compose-generation time and is silently skipped — no bind entry is emitted for
+  that mount.
+- `subPath` values that are absolute paths or contain `..` segments are rejected
+  with a translation error to prevent directory traversal.
+
 ### Intentionally not translated
 
 These are Kubernetes-only concerns with no meaningful local dev equivalent:

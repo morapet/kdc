@@ -68,8 +68,11 @@ func (t *Translator) Translate() (*TranslateResult, error) {
 			messages = append(messages, fmt.Sprintf("skipped Deployment %q: %s", d.Name, reason))
 			continue
 		}
-		svcs, replacements, msgs := translateDeployment(d, cmIndex, secIndex, t.ctx.Namespace, t.engine)
+		svcs, replacements, msgs, err := translateDeployment(d, cmIndex, secIndex, t.ctx.Namespace, t.engine)
 		messages = append(messages, msgs...)
+		if err != nil {
+			return nil, fmt.Errorf("translating Deployment %q: %w", d.Name, err)
+		}
 		for _, svc := range svcs {
 			project.Services[svc.Name] = svc
 		}
@@ -88,8 +91,11 @@ func (t *Translator) Translate() (*TranslateResult, error) {
 			messages = append(messages, fmt.Sprintf("skipped StatefulSet %q: %s", s.Name, reason))
 			continue
 		}
-		svcs, replacements, msgs := translateStatefulSet(s, cmIndex, secIndex, t.ctx.Namespace, t.engine)
+		svcs, replacements, msgs, err := translateStatefulSet(s, cmIndex, secIndex, t.ctx.Namespace, t.engine)
 		messages = append(messages, msgs...)
+		if err != nil {
+			return nil, fmt.Errorf("translating StatefulSet %q: %w", s.Name, err)
+		}
 		for _, svc := range svcs {
 			project.Services[svc.Name] = svc
 		}
@@ -108,8 +114,11 @@ func (t *Translator) Translate() (*TranslateResult, error) {
 			messages = append(messages, fmt.Sprintf("skipped Pod %q: %s", p.Name, reason))
 			continue
 		}
-		svcs, replacements, msgs := translatePod(p, cmIndex, secIndex, t.ctx.Namespace, t.engine)
+		svcs, replacements, msgs, err := translatePod(p, cmIndex, secIndex, t.ctx.Namespace, t.engine)
 		messages = append(messages, msgs...)
+		if err != nil {
+			return nil, fmt.Errorf("translating Pod %q: %w", p.Name, err)
+		}
 		for _, svc := range svcs {
 			project.Services[svc.Name] = svc
 		}

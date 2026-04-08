@@ -12,6 +12,21 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
+// isSafeSubPath returns true when subPath is safe to use as a path component
+// inside a .kdc directory. It rejects absolute paths and any path that
+// contains ".." segments to prevent directory-traversal attacks.
+func isSafeSubPath(subPath string) bool {
+	if strings.HasPrefix(subPath, "/") {
+		return false
+	}
+	for _, part := range strings.Split(subPath, "/") {
+		if part == ".." || part == "" {
+			return false
+		}
+	}
+	return true
+}
+
 // translateDeployment converts a Deployment into compose services.
 // Returns (translated services, injected replacement services, info messages).
 func translateDeployment(
@@ -20,7 +35,7 @@ func translateDeployment(
 	secIndex map[string]map[string]string,
 	defaultNamespace string,
 	eng *filter.Engine,
-) (services, replacements []comptypes.ServiceConfig, messages []string) {
+) (services, replacements []comptypes.ServiceConfig, messages []string, err error) {
 	ns := d.Namespace
 	if ns == "" {
 		ns = defaultNamespace
@@ -36,7 +51,7 @@ func translateStatefulSet(
 	secIndex map[string]map[string]string,
 	defaultNamespace string,
 	eng *filter.Engine,
-) (services, replacements []comptypes.ServiceConfig, messages []string) {
+) (services, replacements []comptypes.ServiceConfig, messages []string, err error) {
 	ns := s.Namespace
 	if ns == "" {
 		ns = defaultNamespace
@@ -51,7 +66,7 @@ func translatePod(
 	secIndex map[string]map[string]string,
 	defaultNamespace string,
 	eng *filter.Engine,
-) (services, replacements []comptypes.ServiceConfig, messages []string) {
+) (services, replacements []comptypes.ServiceConfig, messages []string, err error) {
 	ns := p.Namespace
 	if ns == "" {
 		ns = defaultNamespace
@@ -69,7 +84,7 @@ func translatePodSpec(
 	defaultNamespace string,
 	sourceLabels map[string]string,
 	eng *filter.Engine,
-) (services, replacements []comptypes.ServiceConfig, messages []string) {
+) (services, replacements []comptypes.ServiceConfig, messages []string, err error) {
 	// Build a map of volume name -> source type for reference resolution.
 	volSources := buildVolumeSources(spec.Volumes)
 
@@ -113,7 +128,10 @@ func translatePodSpec(
 		}
 		primary = false
 
-		svc := translateContainer(name, namespace, c, spec, volSources, cmIndex, secIndex, defaultNamespace)
+		svc, translateErr := translateContainer(name, namespace, c, spec, volSources, cmIndex, secIndex, defaultNamespace)
+		if translateErr != nil {
+			return nil, nil, messages, translateErr
+		}
 		svc.Labels = comptypes.Labels{
 			kdctypes.AnnotationSourceKind:      sourceKind,
 			kdctypes.AnnotationSourceName:      ownerName,
@@ -121,7 +139,7 @@ func translatePodSpec(
 		}
 		services = append(services, svc)
 	}
-	return services, replacements, messages
+	return services, replacements, messages, nil
 }
 
 // volumeSource describes what a pod Volume is backed by.
@@ -158,7 +176,7 @@ func translateContainer(
 	cmIndex map[string]map[string]string,
 	secIndex map[string]map[string]string,
 	defaultNamespace string,
-) comptypes.ServiceConfig {
+) (comptypes.ServiceConfig, error) {
 	svc := comptypes.ServiceConfig{
 		Name:        serviceName,
 		Image:       c.Image,
@@ -225,7 +243,11 @@ func translateContainer(
 	}
 
 	// Volume mounts.
-	svc.Volumes = translateVolumeMounts(c.VolumeMounts, volSources)
+	vols, err := translateVolumeMounts(c.VolumeMounts, volSources)
+	if err != nil {
+		return comptypes.ServiceConfig{}, err
+	}
+	svc.Volumes = vols
 
 	// Container ports.
 	for _, p := range c.Ports {
@@ -257,14 +279,23 @@ func translateContainer(
 		}
 	}
 
-	return svc
+	return svc, nil
 }
 
 // translateVolumeMounts converts container volume mounts to compose volume entries.
 // ConfigMap and Secret mounts become compose configs/secrets references.
 // PVC mounts become named volume references.
 // EmptyDir mounts become anonymous volumes.
-func translateVolumeMounts(mounts []corev1.VolumeMount, volSources map[string]volumeSource) []comptypes.ServiceVolumeConfig {
+//
+// When a mount carries a non-empty SubPath the bind source is narrowed to the
+// specific file inside the .kdc directory so that Docker does not create a
+// directory where the container expects a single file.  SubPathExpr is not
+// supported because Docker Compose cannot evaluate Kubernetes API expressions;
+// such mounts are silently skipped with no bind entry emitted.
+//
+// SubPath values that are absolute paths or contain ".." segments are rejected
+// with an error to prevent directory-traversal attacks.
+func translateVolumeMounts(mounts []corev1.VolumeMount, volSources map[string]volumeSource) ([]comptypes.ServiceVolumeConfig, error) {
 	var vols []comptypes.ServiceVolumeConfig
 	for _, m := range mounts {
 		src, ok := volSources[m.Name]
@@ -273,24 +304,48 @@ func translateVolumeMounts(mounts []corev1.VolumeMount, volSources map[string]vo
 		}
 		switch src.kind {
 		case "configMap":
+			source := fmt.Sprintf("./.kdc/configs/%s", src.name)
+			if m.SubPathExpr != "" {
+				// SubPathExpr uses the Downward API and cannot be evaluated at
+				// compose-generation time; skip producing a bind entry.
+				continue
+			}
+			if m.SubPath != "" {
+				if !isSafeSubPath(m.SubPath) {
+					return nil, fmt.Errorf("unsafe subPath %q in volume mount %q: must be a relative path without absolute prefix or '..' segments", m.SubPath, m.Name)
+				}
+				source = fmt.Sprintf("./.kdc/configs/%s/%s", src.name, m.SubPath)
+			}
 			vols = append(vols, comptypes.ServiceVolumeConfig{
-				Type:   "bind",
-				Source: fmt.Sprintf("./.kdc/configs/%s", src.name),
-				Target: m.MountPath,
+				Type:     "bind",
+				Source:   source,
+				Target:   m.MountPath,
 				ReadOnly: m.ReadOnly,
 			})
 		case "secret":
+			source := fmt.Sprintf("./.kdc/secrets/%s", src.name)
+			if m.SubPathExpr != "" {
+				// SubPathExpr uses the Downward API and cannot be evaluated at
+				// compose-generation time; skip producing a bind entry.
+				continue
+			}
+			if m.SubPath != "" {
+				if !isSafeSubPath(m.SubPath) {
+					return nil, fmt.Errorf("unsafe subPath %q in volume mount %q: must be a relative path without absolute prefix or '..' segments", m.SubPath, m.Name)
+				}
+				source = fmt.Sprintf("./.kdc/secrets/%s/%s", src.name, m.SubPath)
+			}
 			vols = append(vols, comptypes.ServiceVolumeConfig{
-				Type:   "bind",
-				Source: fmt.Sprintf("./.kdc/secrets/%s", src.name),
-				Target: m.MountPath,
+				Type:     "bind",
+				Source:   source,
+				Target:   m.MountPath,
 				ReadOnly: m.ReadOnly,
 			})
 		case "pvc":
 			vols = append(vols, comptypes.ServiceVolumeConfig{
-				Type:   "volume",
-				Source: src.name,
-				Target: m.MountPath,
+				Type:     "volume",
+				Source:   src.name,
+				Target:   m.MountPath,
 				ReadOnly: m.ReadOnly,
 			})
 		case "emptyDir":
@@ -300,7 +355,7 @@ func translateVolumeMounts(mounts []corev1.VolumeMount, volSources map[string]vo
 			})
 		}
 	}
-	return vols
+	return vols, nil
 }
 
 // translateProbe converts a K8s Probe to a compose HealthCheckConfig.

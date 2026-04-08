@@ -77,7 +77,10 @@ func TestTranslatePodSpec_SourceKindLabel(t *testing.T) {
 	}
 
 	// Deployment kind
-	svcs, _, _ := translatePodSpec("Deployment", "myapp", "default", spec, nil, nil, "default", nil, filter.New(nil))
+	svcs, _, _, err := translatePodSpec("Deployment", "myapp", "default", spec, nil, nil, "default", nil, filter.New(nil))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(svcs) != 1 {
 		t.Fatalf("expected 1 service, got %d", len(svcs))
 	}
@@ -86,7 +89,10 @@ func TestTranslatePodSpec_SourceKindLabel(t *testing.T) {
 	}
 
 	// Pod kind
-	svcs, _, _ = translatePodSpec("Pod", "mypod", "default", spec, nil, nil, "default", nil, filter.New(nil))
+	svcs, _, _, err = translatePodSpec("Pod", "mypod", "default", spec, nil, nil, "default", nil, filter.New(nil))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(svcs) != 1 {
 		t.Fatalf("expected 1 service, got %d", len(svcs))
 	}
@@ -105,7 +111,10 @@ func TestTranslateContainerPorts(t *testing.T) {
 			{ContainerPort: 3000}, // no protocol — should default to tcp
 		},
 	}
-	svc := translateContainer("app", "default", c, corev1.PodSpec{}, nil, nil, nil, "default")
+	svc, err := translateContainer("app", "default", c, corev1.PodSpec{}, nil, nil, nil, "default")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if len(svc.Ports) != 3 {
 		t.Fatalf("expected 3 ports, got %d", len(svc.Ports))
@@ -203,7 +212,10 @@ func TestEnvFromConfigMap_UsesEnvFile(t *testing.T) {
 	}
 
 	spec := corev1.PodSpec{Containers: []corev1.Container{c}}
-	svcs, _, _ := translatePodSpec("Pod", "myapp", "default", spec, cmIndex, secIndex, "default", nil, filter.New(nil))
+	svcs, _, _, err := translatePodSpec("Pod", "myapp", "default", spec, cmIndex, secIndex, "default", nil, filter.New(nil))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(svcs) != 1 {
 		t.Fatalf("expected 1 service, got %d", len(svcs))
 	}
@@ -260,7 +272,10 @@ func TestEnvValueFrom_StillInlined(t *testing.T) {
 	}
 
 	spec := corev1.PodSpec{Containers: []corev1.Container{c}}
-	svcs, _, _ := translatePodSpec("Pod", "myapp", "default", spec, cmIndex, secIndex, "default", nil, filter.New(nil))
+	svcs, _, _, err := translatePodSpec("Pod", "myapp", "default", spec, cmIndex, secIndex, "default", nil, filter.New(nil))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	svc := svcs[0]
 
 	// Single-key valueFrom references should still be inlined.
@@ -286,7 +301,10 @@ func TestTranslateStatefulSet_SourceKindLabel(t *testing.T) {
 		},
 	}
 
-	svcs, _, _ := translateStatefulSet(ss, nil, nil, "default", filter.New(nil))
+	svcs, _, _, err := translateStatefulSet(ss, nil, nil, "default", filter.New(nil))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(svcs) != 1 {
 		t.Fatalf("expected 1 service, got %d", len(svcs))
 	}
@@ -349,5 +367,180 @@ func TestApplyServiceAliases(t *testing.T) {
 	}
 	if len(defaultNet.Aliases) == 0 || defaultNet.Aliases[0] != "web-svc" {
 		t.Errorf("expected alias 'web-svc', got %v", defaultNet.Aliases)
+	}
+}
+
+// TestTranslateVolumeMounts_ConfigMapNoSubPath verifies that a ConfigMap mount
+// without subPath produces a directory bind mount (existing behaviour).
+func TestTranslateVolumeMounts_ConfigMapNoSubPath(t *testing.T) {
+	volSources := map[string]volumeSource{
+		"my-cm": {kind: "configMap", name: "my-configmap"},
+	}
+	mounts := []corev1.VolumeMount{
+		{Name: "my-cm", MountPath: "/etc/config"},
+	}
+
+	vols, err := translateVolumeMounts(mounts, volSources)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(vols) != 1 {
+		t.Fatalf("expected 1 volume, got %d", len(vols))
+	}
+	if vols[0].Source != "./.kdc/configs/my-configmap" {
+		t.Errorf("expected directory source, got %q", vols[0].Source)
+	}
+	if vols[0].Target != "/etc/config" {
+		t.Errorf("expected target /etc/config, got %q", vols[0].Target)
+	}
+	if vols[0].Type != "bind" {
+		t.Errorf("expected bind type, got %q", vols[0].Type)
+	}
+}
+
+// TestTranslateVolumeMounts_ConfigMapWithSubPath verifies that a ConfigMap mount
+// with subPath produces a file-level bind mount.
+func TestTranslateVolumeMounts_ConfigMapWithSubPath(t *testing.T) {
+	volSources := map[string]volumeSource{
+		"init-scripts": {kind: "configMap", name: "pricing-database-init-2fkb264hk4"},
+	}
+	mounts := []corev1.VolumeMount{
+		{
+			Name:      "init-scripts",
+			MountPath: "/docker-entrypoint-initdb.d/database-init.sh",
+			SubPath:   "database-init.sh",
+			ReadOnly:  true,
+		},
+	}
+
+	vols, err := translateVolumeMounts(mounts, volSources)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(vols) != 1 {
+		t.Fatalf("expected 1 volume, got %d", len(vols))
+	}
+	want := "./.kdc/configs/pricing-database-init-2fkb264hk4/database-init.sh"
+	if vols[0].Source != want {
+		t.Errorf("expected source %q, got %q", want, vols[0].Source)
+	}
+	if vols[0].Target != "/docker-entrypoint-initdb.d/database-init.sh" {
+		t.Errorf("unexpected target: %q", vols[0].Target)
+	}
+	if !vols[0].ReadOnly {
+		t.Error("expected ReadOnly to be true")
+	}
+}
+
+// TestTranslateVolumeMounts_SecretWithSubPath verifies that a Secret mount with
+// subPath produces a file-level bind mount inside .kdc/secrets/.
+func TestTranslateVolumeMounts_SecretWithSubPath(t *testing.T) {
+	volSources := map[string]volumeSource{
+		"tls-secret": {kind: "secret", name: "my-tls"},
+	}
+	mounts := []corev1.VolumeMount{
+		{
+			Name:      "tls-secret",
+			MountPath: "/etc/ssl/certs/tls.crt",
+			SubPath:   "tls.crt",
+		},
+	}
+
+	vols, err := translateVolumeMounts(mounts, volSources)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(vols) != 1 {
+		t.Fatalf("expected 1 volume, got %d", len(vols))
+	}
+	want := "./.kdc/secrets/my-tls/tls.crt"
+	if vols[0].Source != want {
+		t.Errorf("expected source %q, got %q", want, vols[0].Source)
+	}
+	if vols[0].Target != "/etc/ssl/certs/tls.crt" {
+		t.Errorf("unexpected target: %q", vols[0].Target)
+	}
+}
+
+// TestTranslateVolumeMounts_UnsafeSubPath verifies that path-traversal subPaths
+// are rejected with an error.
+func TestTranslateVolumeMounts_UnsafeSubPath(t *testing.T) {
+	volSources := map[string]volumeSource{
+		"my-cm": {kind: "configMap", name: "my-configmap"},
+	}
+
+	cases := []struct {
+		name    string
+		subPath string
+	}{
+		{"dotdot", "../passwd"},
+		{"absolute", "/etc/passwd"},
+		{"dotdot-nested", "foo/../../../etc/passwd"},
+		{"double-slash", "foo//bar"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mounts := []corev1.VolumeMount{
+				{Name: "my-cm", MountPath: "/target", SubPath: tc.subPath},
+			}
+			_, err := translateVolumeMounts(mounts, volSources)
+			if err == nil {
+				t.Errorf("expected error for unsafe subPath %q, got nil", tc.subPath)
+			}
+		})
+	}
+}
+
+// TestTranslateVolumeMounts_SubPathExpr verifies that SubPathExpr mounts are
+// silently skipped because compose cannot evaluate Kubernetes API expressions.
+func TestTranslateVolumeMounts_SubPathExpr(t *testing.T) {
+	volSources := map[string]volumeSource{
+		"my-cm": {kind: "configMap", name: "my-configmap"},
+	}
+	mounts := []corev1.VolumeMount{
+		{Name: "my-cm", MountPath: "/etc/config", SubPathExpr: "$(MY_VAR)"},
+	}
+
+	vols, err := translateVolumeMounts(mounts, volSources)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(vols) != 0 {
+		t.Errorf("expected SubPathExpr mount to be skipped, got %d volumes", len(vols))
+	}
+}
+
+// TestTranslateVolumeMounts_PVCAndEmptyDir verifies that PVC and emptyDir mounts
+// are unaffected by the subPath change.
+func TestTranslateVolumeMounts_PVCAndEmptyDir(t *testing.T) {
+	volSources := map[string]volumeSource{
+		"data-pvc":  {kind: "pvc", name: "postgres-data"},
+		"tmp-cache": {kind: "emptyDir", name: "tmp-cache"},
+	}
+	mounts := []corev1.VolumeMount{
+		{Name: "data-pvc", MountPath: "/var/lib/postgresql/data"},
+		{Name: "tmp-cache", MountPath: "/tmp/cache"},
+	}
+
+	vols, err := translateVolumeMounts(mounts, volSources)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(vols) != 2 {
+		t.Fatalf("expected 2 volumes, got %d", len(vols))
+	}
+
+	pvcVol := vols[0]
+	if pvcVol.Type != "volume" {
+		t.Errorf("expected PVC to produce 'volume' type, got %q", pvcVol.Type)
+	}
+	if pvcVol.Source != "postgres-data" {
+		t.Errorf("unexpected PVC source: %q", pvcVol.Source)
+	}
+
+	emptyVol := vols[1]
+	if emptyVol.Type != "tmpfs" {
+		t.Errorf("expected emptyDir to produce 'tmpfs' type, got %q", emptyVol.Type)
 	}
 }
