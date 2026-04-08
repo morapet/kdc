@@ -109,7 +109,7 @@ kdc generate -k <path> [flags]
 | `PersistentVolumeClaim` | Named volumes |
 | Container `env` / `envFrom` | `environment:` / `env_file:` |
 | Container `command` / `args` | `entrypoint:` / `command:` |
-| Container `ports` | `ports:` |
+| Container `ports` | `ports:` (internal-only, no host binding — see [Ports](#ports)) |
 | Readiness/Liveness probes | `healthcheck:` (using bash `/dev/tcp`) |
 | Resource requests/limits | `deploy.resources` |
 | `EmptyDir` volumes | `tmpfs` mounts |
@@ -160,6 +160,25 @@ volumes:
   that mount.
 - `subPath` values that are absolute paths or contain `..` segments are rejected
   with a translation error to prevent directory traversal.
+
+### Ports
+
+Container ports are translated as **internal-only** — the `target` port is set so containers can reach each other on the Docker network, but no `published` host binding is added. This avoids immediate `localhost` port collisions when multiple services share the same container port (e.g. several services all listening on `:8080` — valid in Kubernetes where each Pod has its own IP, but a collision in Docker Compose where everything shares `localhost`).
+
+To expose a service on your host machine, add an explicit `published:` entry in `kdc-overrides.yaml`:
+
+```yaml
+# kdc-overrides.yaml — expose only the services you need on localhost
+services:
+  web:
+    ports:
+      - target: 80
+        published: "8080"
+  api:
+    ports:
+      - target: 8080
+        published: "9000"
+```
 
 ### Intentionally not translated
 
@@ -262,7 +281,10 @@ Use an overrides file to deep-merge additional Compose configuration onto the ge
 
 services:
   web:
-    # Expose the web service on localhost port 8080
+    # Bind the web service to localhost port 8080.
+    # kdc does not publish ports by default (to avoid collisions when multiple
+    # services share the same container port). Add entries here for every service
+    # you need to reach directly from your machine.
     ports:
       - target: 80
         published: "8080"

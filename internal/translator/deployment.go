@@ -270,17 +270,20 @@ func translateContainer(
 	}
 	svc.Volumes = vols
 
-	// Container ports.
+	// Container ports: expose internally only (no host binding).
+	// Multiple services may share the same container port number; binding all of
+	// them to localhost would cause immediate collisions. Use kdc-overrides.yaml
+	// to add explicit host bindings for the services you need to reach from your
+	// machine.
 	for _, p := range c.Ports {
 		proto := strings.ToLower(string(p.Protocol))
 		if proto == "" {
 			proto = "tcp"
 		}
-		port := fmt.Sprintf("%d", p.ContainerPort)
 		svc.Ports = append(svc.Ports, comptypes.ServicePortConfig{
-			Target:    uint32(p.ContainerPort),
-			Published: port,
-			Protocol:  proto,
+			Target:   uint32(p.ContainerPort),
+			Protocol: proto,
+			// Published intentionally left empty — no localhost binding.
 		})
 	}
 

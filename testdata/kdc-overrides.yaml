@@ -5,7 +5,8 @@
 
 services:
   web:
-    # Expose the web service on localhost port 8080
+    # Bind the web service to localhost port 8080 (host binding — required because
+    # kdc does not publish ports by default to avoid localhost collisions)
     ports:
       - target: 80
         published: "8080"

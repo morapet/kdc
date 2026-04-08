@@ -124,8 +124,8 @@ func TestTranslateContainerPorts(t *testing.T) {
 	if svc.Ports[0].Target != 8080 {
 		t.Errorf("expected target 8080, got %d", svc.Ports[0].Target)
 	}
-	if svc.Ports[0].Published != "8080" {
-		t.Errorf("expected published 8080, got %q", svc.Ports[0].Published)
+	if svc.Ports[0].Published != "" {
+		t.Errorf("expected published to be empty (no host binding), got %q", svc.Ports[0].Published)
 	}
 	if svc.Ports[0].Protocol != "tcp" {
 		t.Errorf("expected protocol tcp, got %q", svc.Ports[0].Protocol)
