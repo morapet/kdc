@@ -1,6 +1,7 @@
 package translator
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -542,5 +543,75 @@ func TestTranslateVolumeMounts_PVCAndEmptyDir(t *testing.T) {
 	emptyVol := vols[1]
 	if emptyVol.Type != "tmpfs" {
 		t.Errorf("expected emptyDir to produce 'tmpfs' type, got %q", emptyVol.Type)
+	}
+}
+
+// TestEscapeComposeVars verifies that ${VAR} references are escaped to $${VAR}
+// so Docker Compose does not interpolate them at render time.
+func TestEscapeComposeVars(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{`export REDIS_ARGS="${REDIS_ARGS} --requirepass ${REDIS_PASSWORD}"; /entrypoint.sh`, `export REDIS_ARGS="$${REDIS_ARGS} --requirepass $${REDIS_PASSWORD}"; /entrypoint.sh`},
+		{`no variables here`, `no variables here`},
+		{`$PLAIN_VAR`, `$PLAIN_VAR`},
+		{`${SINGLE}`, `$${SINGLE}`},
+		{`prefix ${A} middle ${B} suffix`, `prefix $${A} middle $${B} suffix`},
+	}
+	for _, tc := range cases {
+		got := escapeComposeVars(tc.input)
+		if got != tc.want {
+			t.Errorf("escapeComposeVars(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+// TestTranslateContainer_EscapesShellVarsInCommand verifies that ${VAR} patterns
+// in container command/args are escaped to $${VAR} in the generated compose
+// service so that Docker Compose does not interpolate them at render time.
+// This is the fix for the Redis password issue: REDIS_PASSWORD is provided via
+// env_file (applied at container start), not at compose render time.
+func TestTranslateContainer_EscapesShellVarsInCommand(t *testing.T) {
+	c := corev1.Container{
+		Name:  "pricing-redis",
+		Image: "redis/redis-stack-server:7.0.6-RC9",
+		Command: []string{"/bin/sh", "-c"},
+		Args: []string{
+			`export REDIS_ARGS="${REDIS_ARGS} --requirepass ${REDIS_PASSWORD}"; export REDISEARCH_ARGS="MAXSEARCHRESULTS -1 TIMEOUT 60000"; /entrypoint.sh`,
+		},
+	}
+
+	svc, err := translateContainer("pricing-redis", "default", c, corev1.PodSpec{}, nil, nil, nil, "default")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Entrypoint should not contain any ${} — these have no variable refs, no change expected.
+	for _, e := range svc.Entrypoint {
+		if strings.Contains(e, "${") {
+			t.Errorf("entrypoint element %q still contains ${}: should have been escaped", e)
+		}
+	}
+
+	// Command (args) must have ${REDIS_ARGS} and ${REDIS_PASSWORD} escaped.
+	if len(svc.Command) == 0 {
+		t.Fatal("expected non-empty command")
+	}
+	cmd := svc.Command[0]
+
+	// After escaping, no lone ${VAR} should remain (all must be $${VAR}).
+	// Remove all properly-escaped $${...} occurrences and verify no bare ${ is left.
+	stripped := strings.ReplaceAll(cmd, "$${", "")
+	if strings.Contains(stripped, "${") {
+		t.Errorf("command still contains unescaped ${}: %q", cmd)
+	}
+
+	// The properly-escaped forms must be present.
+	if !strings.Contains(cmd, "$${REDIS_ARGS}") {
+		t.Errorf("command missing $${REDIS_ARGS}: %q", cmd)
+	}
+	if !strings.Contains(cmd, "$${REDIS_PASSWORD}") {
+		t.Errorf("command missing $${REDIS_PASSWORD}: %q", cmd)
 	}
 }

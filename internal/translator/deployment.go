@@ -12,6 +12,25 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
+// escapeComposeVars replaces every `${` with `$${` in s so that Docker Compose
+// does not interpolate shell variable references at render time. The container
+// shell will expand them at runtime instead. This is needed when a K8s
+// container command/args string contains variables like `${REDIS_PASSWORD}`
+// that are supplied via env_file (applied at container start, not at compose
+// render time).
+func escapeComposeVars(s string) string {
+	return strings.ReplaceAll(s, "${", "$${")
+}
+
+// escapeShellCommand applies escapeComposeVars to every element of args.
+func escapeShellCommand(args []string) []string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		out[i] = escapeComposeVars(a)
+	}
+	return out
+}
+
 // isSafeSubPath returns true when subPath is safe to use as a path component
 // inside a .kdc directory. It rejects absolute paths and any path that
 // contains ".." segments to prevent directory-traversal attacks.
@@ -183,12 +202,14 @@ func translateContainer(
 		Environment: comptypes.MappingWithEquals{},
 	}
 
-	// Command / args
+	// Command / args: escape `${VAR}` → `$${VAR}` so Compose does not
+	// interpolate shell variables at render time; the container shell expands
+	// them at runtime.
 	if len(c.Command) > 0 {
-		svc.Entrypoint = comptypes.ShellCommand(c.Command)
+		svc.Entrypoint = comptypes.ShellCommand(escapeShellCommand(c.Command))
 	}
 	if len(c.Args) > 0 {
-		svc.Command = comptypes.ShellCommand(c.Args)
+		svc.Command = comptypes.ShellCommand(escapeShellCommand(c.Args))
 	}
 
 	// Env vars: direct values first.
