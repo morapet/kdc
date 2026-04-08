@@ -140,7 +140,7 @@ volumeMounts:
 volumes:
   - name: init-scripts
     configMap:
-      name: pricing-database-init-2fkb264hk4
+      name: sample-database-init-2fkb264hk4
 ```
 
 kdc generates:
@@ -148,7 +148,7 @@ kdc generates:
 ```yaml
 volumes:
   - type: bind
-    source: ./.kdc/configs/pricing-database-init-2fkb264hk4/database-init.sh
+    source: ./.kdc/configs/sample-database-init-2fkb264hk4/database-init.sh
     target: /docker-entrypoint-initdb.d/database-init.sh
     read_only: true
 ```

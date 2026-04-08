@@ -403,7 +403,7 @@ func TestTranslateVolumeMounts_ConfigMapNoSubPath(t *testing.T) {
 // with subPath produces a file-level bind mount.
 func TestTranslateVolumeMounts_ConfigMapWithSubPath(t *testing.T) {
 	volSources := map[string]volumeSource{
-		"init-scripts": {kind: "configMap", name: "pricing-database-init-2fkb264hk4"},
+		"init-scripts": {kind: "configMap", name: "sample-database-init-2fkb264hk4"},
 	}
 	mounts := []corev1.VolumeMount{
 		{
@@ -421,7 +421,7 @@ func TestTranslateVolumeMounts_ConfigMapWithSubPath(t *testing.T) {
 	if len(vols) != 1 {
 		t.Fatalf("expected 1 volume, got %d", len(vols))
 	}
-	want := "./.kdc/configs/pricing-database-init-2fkb264hk4/database-init.sh"
+	want := "./.kdc/configs/sample-database-init-2fkb264hk4/database-init.sh"
 	if vols[0].Source != want {
 		t.Errorf("expected source %q, got %q", want, vols[0].Source)
 	}
@@ -574,7 +574,7 @@ func TestEscapeComposeVars(t *testing.T) {
 // env_file (applied at container start), not at compose render time.
 func TestTranslateContainer_EscapesShellVarsInCommand(t *testing.T) {
 	c := corev1.Container{
-		Name:  "pricing-redis",
+		Name:  "cache-redis",
 		Image: "redis/redis-stack-server:7.0.6-RC9",
 		Command: []string{"/bin/sh", "-c"},
 		Args: []string{
@@ -582,7 +582,7 @@ func TestTranslateContainer_EscapesShellVarsInCommand(t *testing.T) {
 		},
 	}
 
-	svc, err := translateContainer("pricing-redis", "default", c, corev1.PodSpec{}, nil, nil, nil, "default")
+	svc, err := translateContainer("cache-redis", "default", c, corev1.PodSpec{}, nil, nil, nil, "default")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
