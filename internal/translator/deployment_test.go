@@ -476,6 +476,7 @@ func TestTranslateVolumeMounts_UnsafeSubPath(t *testing.T) {
 		{"dotdot", "../passwd"},
 		{"absolute", "/etc/passwd"},
 		{"dotdot-nested", "foo/../../../etc/passwd"},
+		{"double-slash", "foo//bar"},
 	}
 
 	for _, tc := range cases {

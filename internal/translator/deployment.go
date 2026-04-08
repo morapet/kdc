@@ -20,7 +20,7 @@ func isSafeSubPath(subPath string) bool {
 		return false
 	}
 	for _, part := range strings.Split(subPath, "/") {
-		if part == ".." {
+		if part == ".." || part == "" {
 			return false
 		}
 	}
@@ -312,7 +312,7 @@ func translateVolumeMounts(mounts []corev1.VolumeMount, volSources map[string]vo
 			}
 			if m.SubPath != "" {
 				if !isSafeSubPath(m.SubPath) {
-					return nil, fmt.Errorf("unsafe subPath %q in volume mount %q: must be a relative path with no '..' segments", m.SubPath, m.Name)
+					return nil, fmt.Errorf("unsafe subPath %q in volume mount %q: must be a relative path without absolute prefix or '..' segments", m.SubPath, m.Name)
 				}
 				source = fmt.Sprintf("./.kdc/configs/%s/%s", src.name, m.SubPath)
 			}
@@ -331,7 +331,7 @@ func translateVolumeMounts(mounts []corev1.VolumeMount, volSources map[string]vo
 			}
 			if m.SubPath != "" {
 				if !isSafeSubPath(m.SubPath) {
-					return nil, fmt.Errorf("unsafe subPath %q in volume mount %q: must be a relative path with no '..' segments", m.SubPath, m.Name)
+					return nil, fmt.Errorf("unsafe subPath %q in volume mount %q: must be a relative path without absolute prefix or '..' segments", m.SubPath, m.Name)
 				}
 				source = fmt.Sprintf("./.kdc/secrets/%s/%s", src.name, m.SubPath)
 			}
